@@ -1,0 +1,14 @@
+---
+title: "Wind power prediction"
+format: 
+    gfm:
+        fontsize: smaller
+        number-sections: true
+---
+
+## Introduction
+
+```{python}
+import pandas as pd
+```
+
