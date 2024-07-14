@@ -84,35 +84,49 @@ plt.show()
 
 from catboost import CatBoostRegressor, Pool, cv
 from sklearn.metrics import r2_score, mean_squared_error
+from sklearn.model_selection import RandomizedSearchCV
+from scipy.stats import randint, uniform
 
-dt_train = dt[dt["Time"] < datetime(2019,7,1,0,0,0)]
-dt_val = dt[(dt["Time"] >= datetime(2019,7,1,0,0,0)) & (dt["Time"] <= datetime(2020,12,31,23,0,0))]
-dt_test = dt[dt["Time"] > datetime(2020,12,31,23,0,0)]
+X_train = dt.loc[dt["Time"] < datetime(2021,1,1,0,0,0)].drop(labels=['Time','Power','tday_week',
+                                                                 'tyear','tmonth','thour',
+                                                                 'tday','date'], axis=1)
+y_train = dt.loc[dt["Time"] < datetime(2021,1,1,0,0,0),'Power']
+X_test = dt.loc[dt["Time"] >= datetime(2021,1,1,0,0,0)].drop(labels=['Time','Power','tday_week',
+                                                                    'tyear','tmonth','thour',
+                                                                    'tday','date'], axis=1)
+y_test = dt.loc[dt["Time"] >= datetime(2021,1,1,0,0,0),'Power']
 
-train_pool = Pool(dt_train.drop(labels=['Time','Power','tday_week','tyear','tmonth', 
-                                        'thour', 'tday','date'], axis=1),
-                  label=dt_train.Power.values.astype(int))
-
-val_pool = Pool(dt_val.drop(labels=['Time','Power','tday_week', 'tyear',
-                             'tmonth', 'thour', 'tday', 'date'], axis=1),
-                label=dt_val.Power.values.astype(int))
-
-test_pool = Pool(dt_test.drop(labels=['Time','Power','tday_week', 'tyear',
-                               'tmonth', 'thour', 'tday', 'date'], axis=1),
-                label=dt_test.Power.values.astype(int))
 
 model = CatBoostRegressor(objective='Poisson')
 #model = CatBoostRegressor(objective='RMSE')
 
-model.fit(train_pool, plot=True, eval_set=val_pool, verbose=500)
+catboost_param_dist = {
+    'depth': randint(4, 10),
+    'learning_rate': uniform(0.01, 0.3),
+    'iterations': randint(10, 1000),
+    'l2_leaf_reg': randint(1, 10),
+    'border_count': randint(1, 255),
+    'bagging_temperature': uniform(0.0, 1.0),
+    'random_strength': uniform(0.0, 1.0)
+}
 
-actual_counts = dt_test.Power.values.astype(int) 
-predicted_counts_poisson = model.predict(test_pool) 
-r2_poisson = r2_score(actual_counts, predicted_counts_poisson)
-rmse_score_poisson_model = np.sqrt(mean_squared_error(actual_counts, predicted_counts_poisson))
+random_search_cb = RandomizedSearchCV(estimator=model,
+                                      param_distributions=catboost_param_dist,
+                                      cv=10,
+                                      verbose=100,
+                                      random_state=42)
+# Fit the model
+random_search_cb.fit(X_train, y_train)
+
+# Evaluate and predict
+predictions = random_search_cb.predict(X_test)
+actual_counts = y_test.values.astype(int) 
+
+r2_poisson = r2_score(actual_counts, predictions)
+rmse_score_poisson_model = np.sqrt(mean_squared_error(actual_counts, predictions))
 print('R2 score: {:.3f}\nRMSE score: {:.2f}'.format(r2_poisson, rmse_score_poisson_model))
 
-dt_test["prediction"] = predicted_counts_poisson
+dt_test["prediction"] = predictions
 dt_day_test = pd.pivot_table(dt_test,
                              index=['date'],
                              aggfunc={'Power': np.mean, 'prediction': np.mean}).reset_index()
